@@ -5,9 +5,8 @@ I built a complete search engine that uses porter stemming, TF-IDF scoring, and 
 ## How to Run
 
 1.  **Setup**
-      - External Packages
-          - Install packages:
-    	   	- `pip install beautifulsoup4 nltk`
+      - Install dependencies
+    	   	- `pip install -r requirements.txt`
     	
       - Edit Config File (config.json)
     	  - Set CORPUS_PATH to path of corpus folder
