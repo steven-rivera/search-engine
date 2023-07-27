@@ -1,0 +1,53 @@
+body {
+    /* font-family: 'Source Code Pro', monospace; */
+    font-family: 'Montserrat', sans-serif;
+    background-color: rgb(169, 187, 165);
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.input-section {
+    text-align: center;
+}
+
+h1 {
+    font-size: 2.5rem;
+    font-weight: 600;
+}
+
+input {
+    font-size: 1rem;
+}
+
+input[type=search] {
+    transition: width 0.4s ease-in-out;
+    width: 12rem;
+    height: 2rem;
+    border-radius: 8px;
+    /* font-size: 1rem; */
+}
+
+input[type=search]:focus {
+    width: 18rem;
+}
+
+input[type=submit] {
+    color: rgb(0, 0, 0);
+    padding: 0.1rem 0.4rem;
+    cursor: pointer;
+    font-family: 'Montserrat', sans-serif;
+    /* font-size: 1rem; */
+}
+
+.results {
+    margin-top: 3rem;
+    font-size: 1.25rem;
+}
+
+span {
+    font-weight: 500;
+}
