@@ -28,7 +28,6 @@ input[type=search] {
     width: 12rem;
     height: 2rem;
     border-radius: 8px;
-    /* font-size: 1rem; */
 }
 
 input[type=search]:focus {
@@ -40,13 +39,11 @@ input[type=submit] {
     padding: 0.1rem 0.4rem;
     cursor: pointer;
     font-family: 'Montserrat', sans-serif;
-    /* font-size: 1rem; */
 }
 
 .results {
     margin-top: 3rem;
     font-size: 1.25rem;
-    width: 90rem
 }
 
 span {
