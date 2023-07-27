@@ -46,6 +46,7 @@ input[type=submit] {
 .results {
     margin-top: 3rem;
     font-size: 1.25rem;
+    width: 90rem
 }
 
 span {
