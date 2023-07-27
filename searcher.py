@@ -1,9 +1,9 @@
-from ast import Index
 from pathlib import Path
 from functools import reduce
 import tokenizer
 import json
 import time
+import argparse
 
 
 # INVERTED INDEX JSON STRUCTURE
@@ -24,6 +24,7 @@ import time
 # STATIC GLOBAL VARIABLES
 DEBUG = True
 CONFIG_FILE = "config.json"
+WEBAPP = False
 
 # GLOBAL VARIABLES
 invertedIndexFilePointer = None
@@ -128,6 +129,8 @@ def getPostingsListsIntersection(queryPostingsLists: list[ list[ dict[str, int] 
     
     
 
+
+
 def readPostingList(token: str) -> list[dict[str, int]]:
     """
     Returns the posting list of the specified token.
@@ -151,25 +154,35 @@ def readPostingList(token: str) -> list[dict[str, int]]:
 
 
 
-def printTop5Results(mergedPostings: list[dict[str, int]]) -> None:
+
+
+
+
+
+def getTop5Results(query: str) -> list[str]:
     global docIDtoURL
+
+    stemmedQueryTokens = set(tokenizer.tokenize(query))
+
+    queryPostingsLists = []
+    for token in stemmedQueryTokens:
+        queryPostingsLists.append(readPostingList(token))
+ 
+    postingsIntersection = getPostingsListsIntersection(queryPostingsLists)
+    postingsIntersection.sort(key=lambda x: x["tf_idf"] + x["tokenImportance"], reverse=True)
     
-    mergedPostings.sort(key=lambda x: x["tf_idf"] + x["tokenImportance"], reverse=True)
-    
+    urls = []
     try:
         for i in range(5):
-            url = docIDtoURL[ mergedPostings[i]["docID"] ]
-            print(f"{i+1}: {url}")
-        print()
+            urls.append(docIDtoURL[postingsIntersection[i]["docID"]])
     except IndexError:
-        print()
+        pass
+    finally:
+        return urls
 
 
 
-
-
-
-def runSearchEngine():
+def runConsoleSearchEngine():
     """
     Main loop which continuously takes query input from 
     user until an empty query is given.
@@ -178,20 +191,53 @@ def runSearchEngine():
 
     while (query := input("Input Query: ")) != "":
         start = time.time()
-        
-        stemmedQueryTokens = set(tokenizer.tokenize(query))
-
-        queryPostingsLists = []
-        for token in stemmedQueryTokens:
-            queryPostingsLists.append(readPostingList(token))
- 
-        postingsIntersection = getPostingsListsIntersection(queryPostingsLists)
-
+        urls = getTop5Results(query)
         end = time.time()
         
-        print(f"({end - start:.4f} seconds)")
-        printTop5Results(postingsIntersection)
+        print(f"(Search Time: {end - start:.4f} seconds)")
+        for rank, url in enumerate(urls, 1):
+            print(f"{rank}: {url}")
         
+
+
+
+
+def runWebAppSearchEngine():
+    from flask import Flask, render_template, request, url_for
+
+    app = Flask(__name__)
+
+   
+    @app.route("/search")
+    def result():
+        query = request.args.to_dict().get("q", "")
+        print(query)
+        if query != "":
+            start = time.time()
+            urls = getTop5Results(query)
+            end = time.time()
+            search_time_milliseconds = round((end - start) * 1000, 4) 
+            return render_template("search.html", query=query, urls=urls, search_time_milliseconds=search_time_milliseconds)
+        
+        return render_template("search.html")
+    
+    app.run(debug=True)
+
+
+
+
+
+def parseCommandLineArgs():
+    global WEBAPP
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--webapp", action="store_true")
+
+    args = parser.parse_args()
+
+    if args.webapp:
+        WEBAPP = True
+
 
 
 
@@ -201,7 +247,8 @@ def main():
     global indexOfIndex
     global docIDtoURL
     
-    
+    parseCommandLineArgs()
+
     with open(CONFIG_FILE) as f:
         # Gets path of folder containing the indexes
         indexFolderPath = json.load(f)["INDEX_STORAGE"]
@@ -212,8 +259,12 @@ def main():
     docIDtoURL               = loadURLs()
 
 
-    # Runs the console UI for entering queries
-    runSearchEngine()
+    if WEBAPP:
+        # Runs webapp for entering queries
+        runWebAppSearchEngine()
+    else:
+        # Runs the console UI for entering queries
+        runConsoleSearchEngine()
 
     # Close the index file
     invertedIndexFilePointer.close()
