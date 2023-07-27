@@ -207,15 +207,15 @@ def runWebAppSearchEngine():
 
     app = Flask(__name__)
 
-   
     @app.route("/search")
     def result():
         query = request.args.to_dict().get("q", "")
-        print(query)
+
         if query != "":
             start = time.time()
             urls = getTop5Results(query)
             end = time.time()
+
             search_time_milliseconds = round((end - start) * 1000, 4) 
             return render_template("search.html", query=query, urls=urls, search_time_milliseconds=search_time_milliseconds)
         
