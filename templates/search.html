@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='search.css') }}">
+
+    <title>Search Engine</title>
+</head>
+
+<body>
+    <div class="container">
+        <div >
+            <h1>Search Engine</h1>
+            <form action="/search">
+                <label>Enter your query:</label>
+                {% if query %}
+                <input type="search" name="q" value="{{ query }}">
+                {% else %}
+                <input type="search" name="q">
+                {% endif %}
+                <input type="submit" value="Search">
+            </form>
+        </div>
+
+        {% if query %}
+        <div>
+            <p>Search Time: {{ search_time_milliseconds }} milliseconds</p>
+            <ol>
+                {% for url in urls %}
+                <li><a href="{{ url }}">{{ url }}</a></li>
+                {% endfor %}
+            </ol>
+        </div>
+        {% endif %}
+    </div>
+</body>
+
+</html>
