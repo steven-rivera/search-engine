@@ -1,3 +1,4 @@
+from typing import Generator
 from collections import defaultdict
 from pathlib import Path
 from bs4 import BeautifulSoup
@@ -37,11 +38,10 @@ TOKEN_IMPORTANCE = {
 
 
 # GLOBAL VARIABLES
-invertedIndex = {}     # Will be used to store the main index
-currPartialIndex = 1   # Keeps track of how many partial indexes have been created (ex. if currPartialIndex=5 then partial indexes 1-4 have been created)
-numberOfDocs = 0       # Keeps track of how many docs have been indexed
-currDocID = 0          # Assigns docID's to documents in the order that they are indexed
-docIDtoURL = []        # List containing URL's each document where docID is the index containing the URL
+invertedIndex: dict[str, dict] = {}   # Will be used to store the main index
+currPartialIndex: int = 1             # Keeps track of how many partial indexes have been created (ex. if currPartialIndex=5 then partial indexes 1-4 have been created)
+numberOfDocs: int = 0                 # Keeps track of how many docs have been indexed
+docIDtoURL: list[str] = []            # List containing URL's each document where docID is the index containing the URL
 
 
 
@@ -65,21 +65,19 @@ def createPostingsForDocument(html: str, docID: int) -> dict[str, dict[str, int]
     tokens = tokenizer.tokenize(soup.get_text())
     frequencies = tokenizer.computeWordFrequencies(tokens)
 
-    # Create a dict where the key is a token and 
-    # the value is the token's importance rating
-    importantTokens = {}
-    for tagObject in soup.find_all(["b", "strong", "h1", "h2", "h3", "title"]):
-        for token in tokenizer.tokenize(str(tagObject.string)):
-            importantTokens[token] = TOKEN_IMPORTANCE.get(tagObject.name, 1)
-                
-
     postings = defaultdict(dict)
     
     for token, frequency in frequencies.items():
         postings[token]["docID"]           = docID
         postings[token]["tokenFrequency"]  = frequency
-        postings[token]["tokenImportance"] = importantTokens.get(token, 1)  # Set to 1 if token not in importantTokens
-        postings[token]["tf_idf"]          = 0.0  # td_idf we be calculated during later step, initialize to 0.0
+        postings[token]["tokenImportance"] = 1         # Set default importance to 1
+        postings[token]["tf_idf"]          = 0.0       # td_idf we be calculated during later step, initialize to 0.0
+
+    
+    # Update the token importance for all tokens within the tags ["title", "h1", "h2", "h3", "b", "strong"]
+    for tagObject in soup.find_all(["title", "h1", "h2", "h3", "b", "strong"]):
+        for token in tokenizer.tokenize(str(tagObject.string)):
+            postings[token]["tokenImportance"] = TOKEN_IMPORTANCE.get(tagObject.name, 1)
 
     return postings
 
@@ -150,7 +148,7 @@ def writePartialIndexToDisk(invertedIndex: dict[str, dict]) -> None:
 
 
 
-def iterCorpus() -> Path:
+def iterCorpus() -> Generator[Path, None, None]:
     """
     Is a generator function that yields a path object of the 
     current JSON file to be indexed.
@@ -268,7 +266,6 @@ def mergePartialIndexes() -> None:
         """
         global currPartialIndex
 
-
         partialIndexPaths = [path for path in Path(indexFolderPath).iterdir() if path.name.startswith("partialIndex_")]
 
         if len(partialIndexPaths) == 1:
@@ -306,11 +303,9 @@ def mergePartialIndexes() -> None:
 def createPartialIndexes() -> None:
     global invertedIndex
     global docIDtoURL
-    global currDocID
     global numberOfDocs
 
-    
-    for document in iterCorpus():
+    for currDocID, document in enumerate(iterCorpus()):
         with document.open() as f:
             jsonData = json.load(f)
             
@@ -320,39 +315,33 @@ def createPartialIndexes() -> None:
             
             if DEBUG: print(f"INDEXDING docID={currDocID}, INDEXSIZE={sys.getsizeof(invertedIndex):,} Bytes, URL={url}")
     
-            # Retrieve and parse htlm of current document
+            # Retrieve and parse html of current document
             html = jsonData.get("content", "")
             postings = createPostingsForDocument(html, currDocID)
 
             for token, posting in postings.items():
                 if token in invertedIndex:
-                    # If token has been seen then increment docFreq
-                    # and append new posting to postingList
+                    # If token has been seen then increment docFreq and append new posting to postingList
                     invertedIndex[token]["docFrequency"] += 1
                     invertedIndex[token]["postingList"].append(posting)
                 else:
-                    # Initialze the postingList for new token and 
-                    # set docFreq to 1
+                    # Initialze the postingList for new token and set docFreq to 1
                     invertedIndex[token] = {
                         "docFrequency" : 1,
                         "postingList" : [posting]
                     }
-            
-            currDocID += 1
+
             numberOfDocs += 1
 
-
-            if sys.getsizeof(invertedIndex) > MAX_INDEX_SIZE:
-                # Save partial index to disk to save memory 
-                writePartialIndexToDisk(invertedIndex)
-                # Reset invertedIndex to empty dictionary
-                invertedIndex.clear() 
+        # Save partial index to disk if invertedIndex excedes memory capacity 
+        if sys.getsizeof(invertedIndex) > MAX_INDEX_SIZE:
+            writePartialIndexToDisk(invertedIndex)
+            invertedIndex.clear() 
 
     
 
-    # Save last part of index to disk
+    # Save last part of index to disk and docIDtoURL mapping to disk
     writePartialIndexToDisk(invertedIndex)
-    # Save docIDtoURL mapping to disk
     writeURLsToDisk(docIDtoURL)
 
 
