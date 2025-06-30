@@ -1,13 +1,17 @@
 from typing import Generator
 from collections import defaultdict
 from pathlib import Path
-from bs4 import BeautifulSoup
 from math import log10
+import json, sys
+
 import tokenizer
-import json
-import sys
+from color import red, green, yellow, grey
+
+from bs4 import BeautifulSoup
+
 
 # INVERTED INDEX JSON STRUCTURE
+# 
 # {
 #   "TOKEN": {
 #       "docFrequency": int,
@@ -23,441 +27,377 @@ import sys
 # }
 
 
-# STATIC GLOBAL VARIABLES
-DEBUG = True
-CONFIG_FILE = "config.json"
-MAX_INDEX_SIZE = 5_000_000 # 5 MB
-TOKEN_IMPORTANCE = {
-    "title": 10,
-    "h1": 5,
-    "h2": 4,
-    "h3": 3,
-    "b": 2,
-    "strong": 2
-}
-
-
 # GLOBAL VARIABLES
-invertedIndex: dict[str, dict] = {}   # Will be used to store the main index
-currPartialIndex: int = 1             # Keeps track of how many partial indexes have been created (ex. if currPartialIndex=5 then partial indexes 1-4 have been created)
-numberOfDocs: int = 0                 # Keeps track of how many docs have been indexed
-docIDtoURL: list[str] = []            # List containing URL's each document where docID is the index containing the URL
+DEBUG                           = True
+DEBUG_MESSAGE_WIDTH             = 50
+CONFIG_FILE_NAME                = "config.json"
+PARTIAL_INDEX_FILE_NAME_PREFIX  = "partialIndex"
+INDEX_FILE_NAME                 = "index.txt"
+INDEX_OF_INDEX_FILE_NAME        = "indexOfIndex.txt"
+DOCID_TO_URL_FILE_NAME          = "docIDtoURLs.txt"
+MAX_INDEX_SIZE                  = 5_000_000 # 5 MB
+TOKEN_IMPORTANCE                = {"title": 10, "h1": 5, "h2": 4, "h3": 3, "b": 2, "strong": 2}
 
 
+class Indexer:
+    def __init__(self, corpusFolderPath: Path, indexFolderPath: Path):
+        self.corpusFolderPath = corpusFolderPath
+        self.indexFolderPath = indexFolderPath
 
-
-def createPostingsForDocument(html: str, docID: int) -> dict[str, dict[str, int]]:
-    """
-    Returns a dictionary where the key is a token and the value
-    is a posting for the current document docID. The posting is of
-    the format,
-
-    {
-     "docID": int,
-     "tokenFrequency": int,
-     "tokenImportance" : int,
-     "tf_idf": float
-    }
-
-    """
-    
-    soup = BeautifulSoup(html, "lxml")
-    tokens = tokenizer.tokenize(soup.get_text())
-    frequencies = tokenizer.computeWordFrequencies(tokens)
-
-    postings = defaultdict(dict)
-    
-    for token, frequency in frequencies.items():
-        postings[token]["docID"]           = docID
-        postings[token]["tokenFrequency"]  = frequency
-        postings[token]["tokenImportance"] = 1         # Set default importance to 1
-        postings[token]["tf_idf"]          = 0.0       # td_idf we be calculated during later step, initialize to 0.0
-
-    
-    # Update the token importance for all tokens within the tags ["title", "h1", "h2", "h3", "b", "strong"]
-    for tagObject in soup.find_all(["title", "h1", "h2", "h3", "b", "strong"]):
-        for token in tokenizer.tokenize(str(tagObject.string)):
-            postings[token]["tokenImportance"] = TOKEN_IMPORTANCE.get(tagObject.name, 1)
-
-    return postings
-
- 
-
-
-
-
-def writeURLsToDisk(docIDtoURL: list[str]) -> None:
-    """
-    Saves the URL's to disk as a text file. Line N
-    corresponds the the URL with docID N-1. 
-    (Ex. Line=70 => docID=69)
-    """
-    
-    with open(CONFIG_FILE) as f:
-        # Gets path of folder to save index
-        indexFolderPath = json.load(f)["INDEX_STORAGE"]
-
-    # Slash operator combines paths and creates new Path object to docIDtoURL file  
-    docIDtoURL_filePath = Path(indexFolderPath) / "docIDtoURL.txt"
-
-    if DEBUG: print(f"\n{f'WRITING docIDtoURL.txt':=^{40}}")
-
-    with docIDtoURL_filePath.open(mode="w", encoding="utf-8") as f:
-        for url in docIDtoURL:
-            f.write(f"{url}\n")
-
-    if DEBUG: print(f"{f'CREATED docIDtoURL.txt':=^{40}}\n")
-
-
-
-
-
-
-def writePartialIndexToDisk(invertedIndex: dict[str, dict]) -> None:
-    """
-    Saves the current invertedIndex to a partialIndex file
-    which will later be used to merge into one full index file.
-    Each line contains a INVERTED INDEX JSON STRUCTURE containing
-    only one token. The tokens are sorted in ascending order.
-    """
-    global currPartialIndex
-
-    with open(CONFIG_FILE) as f:
-        # Gets path of folder to save index file
-        indexFolderPath = json.load(f)["INDEX_STORAGE"]
-
-    # Slash operator combines paths and creates new Path object to partial index 
-    partialIndexFilePath = Path(indexFolderPath) / f"partialIndex_{currPartialIndex}.txt"
-
-    if DEBUG: print(f"\n{f'WRITING partialIndex_{currPartialIndex}.txt':=^{40}}")
-    
-    with partialIndexFilePath.open("w", encoding="utf-8") as f:
-        # Save tokens to file in sorted order to speed merging process
-        for token in sorted(invertedIndex):
-            # Dump inverted index JSON structure onto its 
-            # own line containing only a single term
-            fileLine = {f"{token}": invertedIndex[token]}
-            f.write(f"{json.dumps(fileLine)}\n")
-    
-    if DEBUG: print(f"{f'CREATED partialIndex_{currPartialIndex}.txt':=^{40}}\n")
-
-    # Keeps track of how many partial indexs have been created
-    currPartialIndex += 1
-
-
-
-
-
-def iterCorpus() -> Generator[Path, None, None]:
-    """
-    Is a generator function that yields a path object of the 
-    current JSON file to be indexed.
-    """
-
-    with open(CONFIG_FILE) as f:
-        # Gets path of DEV folder
-        corpus_path = json.load(f)["CORPUS_PATH"]
+        self.index: dict[str, dict] = {}  # Will be used to store the main index  
+        self.docIDtoURL: list[str] = []   # List of URL's where docID is the index containing the URL for a given document
+        self.numberOfDocsIndexed: int = 0 # Keeps track of how many docs have been indexed
+        self.currPartialIndex: int = 1    # Keeps track of how many partial indexes have been created (ex. if currPartialIndex == 5 then partial indexes 1-4 have been created)
         
-    
-    corpus_path = Path(corpus_path)
-    for folder in corpus_path.iterdir():
-        for document in folder.iterdir():
-            yield document
 
-
-
-
-def merge(file1: Path, file2: Path, mergedFile: Path) -> None:
-    """
-    Merges two partial index files into the given mergedFile path.
-    The mergere preserves the alphabetical ordering of tokens.
-    """
-
-    f1, f2 = file1.open(mode="r"), file2.open(mode="r")
-
-    with mergedFile.open(mode="w", encoding="utf-8") as f3:
-        
-        f1_line, f2_line = f1.readline().strip(), f2.readline().strip()
-        while (f1_line != "") and (f2_line != ""):
+    def run(self):
+        self.createPartialIndexes()
+        self.mergePartialIndexesToDisk()
+        self.calculateTF_IDF()
+        self.createIndexofIndex()
+        self.writeDocIdToURLToDisk()
             
-            # Convert current line of each file into dictionary object
-            f1_line_json, f2_line_json = json.loads(f1_line), json.loads(f2_line)
-            
-            # Get token from dictionary object
-            f1_token, f2_token = list(f1_line_json.keys())[0], list(f2_line_json.keys())[0]
 
-        
-            if (f1_token == f2_token):
-                # If tokens are the same then merge objects into f1_line dictionary
-                f1_line_json[f1_token]["docFrequency"] += f2_line_json[f1_token]["docFrequency"]
-                f1_line_json[f1_token]["postingList"].extend(f2_line_json[f1_token]["postingList"]) 
-
-                # Write merged token to file
-                f3.write(f"{json.dumps(f1_line_json)}\n")
-
-                # Read next line from both files
-                f1_line, f2_line = f1.readline().strip(), f2.readline().strip()
-            
-            # Done to maintian alphabetical order 
-            elif (f1_token < f2_token):
-                f3.write(f"{json.dumps(f1_line_json)}\n")
-                f1_line = f1.readline().strip()
-            
-            else:
-                f3.write(f"{json.dumps(f2_line_json)}\n")
-                f2_line = f2.readline().strip()
-
-        
-        # Finish writing f1 to f3 if there are no more lines from f2
-        while (f1_line != ""):
-            f3.write(f"{f1_line}\n")
-            f1_line = f1.readline().strip()
-
-        # Finish writing f2 to f3 if there are no more lines from f1
-        while (f2_line != ""):
-            f3.write(f"{f2_line}\n")
-            f2_line = f2.readline().strip()
-
-
-    # Close files once done reading from them
-    f1.close()
-    f2.close()
-
-
-
-
-    
-
-def mergePartialIndexes() -> None:
-    """
-    Merges all of the partial index files into a single index
-    file called 'index.txt'. Total file merges is O(N)
-    where N is the number of partial indexes.
-
-    Examples:
-
-        Case 1:
-
-            partialIndex_1.txt    partialIndex_2.txt    partialIndex_3.txt    partialIndex_4.txt
-                            \            /                           \            /
-                            partialIndex_5.txt                     partialIndex_6.txt
-                                                    \       /
-                                                    index.txt
-
-        Case 2:
-
-            partialIndex_1.txt    partialIndex_2.txt    partialIndex_3.txt
-                            \            /                   /            
-                            partialIndex_4.txt              /                        
-                                                   \       /
-                                                   index.txt
-    """
-
-    with open(CONFIG_FILE) as f:
-        # Gets path of folder containg partial index files
-        indexFolderPath = json.load(f)["INDEX_STORAGE"]
-    
-
-
-    def _mergePartialIndexes() -> None:
+    def iterCorpus(self) -> Generator[Path, None, None]:
         """
-        Private function which recursively merges all of the 
-        partial index files into a single index file.
+        Is a generator function that yields a path object of the current document to be indexed.
+        The document is stored as a JSON file of the form:
+
+        {
+            "url": string,
+            "content": string
+        }
         """
-        global currPartialIndex
 
-        partialIndexPaths = [path for path in Path(indexFolderPath).iterdir() if path.name.startswith("partialIndex_")]
+        for folder in self.corpusFolderPath.iterdir():
+            for document in folder.iterdir():
+                if document.is_file():
+                    yield document
 
-        if len(partialIndexPaths) == 1:
-            # All files have been merged
-            # Rename file to index.txt
-            partialIndexPaths[0].replace(Path(indexFolderPath) / "index.txt")
-            return
 
-        partialIndexIterator = iter(partialIndexPaths)
-        while True:
-            try:
-                fileToMerge_1 = next(partialIndexIterator)
-                fileToMerge_2 = next(partialIndexIterator)
+    def createPartialIndexes(self) -> None:
+        if DEBUG: print(f"{' CREATING PARTIAL INDEXES ':=^{DEBUG_MESSAGE_WIDTH}}")
+
+        currDocID = 0
+        for document in self.iterCorpus():
+            with document.open() as f:
+                try:
+                    jsonData: dict[str, str] = json.load(f)
+                except:
+                    print(yellow(f"Warning: Invalid JSON file: {f.name}"))
+                    continue
+
+                url = jsonData.get("url", "")
+                html = jsonData.get("content", "")
+
+                if url == "" or html == "":
+                    continue
+
+
+                self.docIDtoURL.append(url)
+                postings: dict[str, dict[str, int]] = self.parseDocument(html, currDocID)
                 
-                # Slash operator combines paths and creates new Path object to partial index 
-                mergedFilePath = Path(indexFolderPath) / f"partialIndex_{currPartialIndex}.txt"
-                merge(fileToMerge_1, fileToMerge_2, mergedFilePath)
-                currPartialIndex += 1
+                for token, posting in postings.items():
+                    if token in self.index:
+                        # Add new posting to postingList for given token
+                        self.index[token]["docFrequency"] += 1
+                        self.index[token]["postingList"].append(posting)
+                    else:
+                        # Initialze the postingList for new token
+                        self.index[token] = {
+                            "docFrequency" : 1,
+                            "postingList" : [posting]
+                        }
 
-                # Delete partial indexes since they are now merged
-                fileToMerge_1.unlink()
-                fileToMerge_2.unlink()
-                
-            except StopIteration:
-                break
+                self.numberOfDocsIndexed += 1
 
-        _mergePartialIndexes()
+                if DEBUG and self.numberOfDocsIndexed % 10 == 0: 
+                    print(grey(f"{self.numberOfDocsIndexed} docs indexed, Current Index Size: {sys.getsizeof(self.index):,} Bytes"))
+
+            # Save partial index to disk if invertedIndex excedes memory capacity 
+            if sys.getsizeof(self.index) > MAX_INDEX_SIZE:
+                if DEBUG: print(yellow(f"Current Index Size greater than {MAX_INDEX_SIZE:,} Bytes\nSaving index to disk..."))
+                self.writePartialIndexToDisk()
+                self.index.clear() 
+
+            currDocID += 1
+
+        self.writePartialIndexToDisk()
+        if DEBUG: print(f"Total Docs Indexed: {self.numberOfDocsIndexed}")
+
+    def parseDocument(self, html: str, docID: int) -> dict[str, dict[str, int]]:
+        """
+        Returns a dictionary where the key is a token and the value
+        is a posting for the current document docID. The posting is of
+        the format:
+
+        {
+         "docID": int,
+         "tokenFrequency": int,
+         "tokenImportance": int,
+         "tf_idf": float
+        }
+        """
+
+        soup = BeautifulSoup(html, "lxml")
+        tokens = tokenizer.tokenize(soup.get_text())
+        frequencies = tokenizer.computeWordFrequencies(tokens)
+
+        postings = defaultdict(dict)
+        for token, frequency in frequencies.items():
+            postings[token]["docID"]           = docID
+            postings[token]["tokenFrequency"]  = frequency
+            postings[token]["tokenImportance"] = 1         # Set default importance to 1
+            postings[token]["tf_idf"]          = 0.0       # td_idf we be calculated during later step, initialize to 0.0
+
+
+        # Update the token importance for all tokens within the tags ["title", "h1", "h2", "h3", "b", "strong"]
+        for tagObject in soup.find_all(["title", "h1", "h2", "h3", "b", "strong"]):
+            for token in tokenizer.tokenize(str(tagObject.string)):
+                if token in postings:
+                    postings[token]["tokenImportance"] = TOKEN_IMPORTANCE.get(tagObject.name, 1)
+
+        return postings
     
-    _mergePartialIndexes()
 
+    def writePartialIndexToDisk(self) -> None:
+        """
+        Saves the current inverted index to a partial index file which will later be merged
+        with other partial index files to create a single index file.
         
+        Each line contains a JOSN object containing a single key/value pair from the 
+        invertedIndex. The tokens are sorted in ascending order to optimize merging step.
+        """
+     
+        partialIndexFilePath = self.indexFolderPath / f"{PARTIAL_INDEX_FILE_NAME_PREFIX}_{self.currPartialIndex}.txt"
 
+        with partialIndexFilePath.open("w", encoding="utf-8") as f:
+            # Save tokens to file in sorted order to speed merging process
+            for token in sorted(self.index):
+                line = {token: self.index[token]}
+                f.write(f"{json.dumps(line)}\n")
 
-
-def createPartialIndexes() -> None:
-    global invertedIndex
-    global docIDtoURL
-    global numberOfDocs
-
-    for currDocID, document in enumerate(iterCorpus()):
-        with document.open() as f:
-            jsonData = json.load(f)
-            
-            # Save URL to associate docID with URL
-            url = jsonData.get("url", "")
-            docIDtoURL.append(url)
-            
-            if DEBUG: print(f"INDEXDING docID={currDocID}, INDEXSIZE={sys.getsizeof(invertedIndex):,} Bytes, URL={url}")
-    
-            # Retrieve and parse html of current document
-            html = jsonData.get("content", "")
-            postings = createPostingsForDocument(html, currDocID)
-
-            for token, posting in postings.items():
-                if token in invertedIndex:
-                    # If token has been seen then increment docFreq and append new posting to postingList
-                    invertedIndex[token]["docFrequency"] += 1
-                    invertedIndex[token]["postingList"].append(posting)
-                else:
-                    # Initialze the postingList for new token and set docFreq to 1
-                    invertedIndex[token] = {
-                        "docFrequency" : 1,
-                        "postingList" : [posting]
-                    }
-
-            numberOfDocs += 1
-
-        # Save partial index to disk if invertedIndex excedes memory capacity 
-        if sys.getsizeof(invertedIndex) > MAX_INDEX_SIZE:
-            writePartialIndexToDisk(invertedIndex)
-            invertedIndex.clear() 
-
-    
-
-    # Save last part of index to disk and docIDtoURL mapping to disk
-    writePartialIndexToDisk(invertedIndex)
-    writeURLsToDisk(docIDtoURL)
-
-
-
-
-def update_tf_idf_score() -> None:
-    """
-    Iterates through the merged index and calculates the tf_idf score
-    for every posting in every postingList. Writes updated index back
-    to disk.
-    """
-
-    global numberOfDocs
-    
-    with open(CONFIG_FILE) as f:
-        # Gets path of folder to save index file
-        indexFolderPath = json.load(f)["INDEX_STORAGE"]
-
-    # Slash operator combines paths and creates new Path object 
-    oldIndex = Path(indexFolderPath) / "index.txt"
-    updatedIndex = Path(indexFolderPath) / "temp.txt"
-
-    # Open files
-    old = oldIndex.open(mode="r", encoding="utf-8")
-    updated = updatedIndex.open(mode="w", encoding="utf-8")
-
-    for line in old:
-        # Convert text line to json object
-        line_dict = json.loads(line.strip())
+        if DEBUG: print(green(f"Successfully created: {partialIndexFilePath.name}\nLocation: {partialIndexFilePath.resolve()}"))
         
-        token = list(line_dict.keys())[0]
-        docFrequency = line_dict[token]["docFrequency"]
-
-        for posting in line_dict[token]["postingList"]:
-            tf = posting["tokenFrequency"]
-            posting["tf_idf"] = ( 1 + log10(tf) ) * log10(numberOfDocs/docFrequency)
-
-        updated.write(f"{json.dumps(line_dict)}\n")
-        
+        # Keeps track of how many partial indexs have been created
+        self.currPartialIndex += 1
    
-    # Close files
-    old.close()
-    updated.close()
 
-    # Delete old index file
-    oldIndex.unlink()
+    def mergePartialIndexesToDisk(self) -> None:
+        """
+        Merges all of the partial index files into a single index file called INDEX_FILE. 
+        The merge preserves the alphabetical ordering of tokens.
 
-    # Rename updated index from 'temp.txt' to 'index.txt'
-    updatedIndex.replace(Path(indexFolderPath) / "index.txt")
+        Examples:
+            Case 1:
 
+                partialIndex_1.txt    partialIndex_2.txt    partialIndex_3.txt    partialIndex_4.txt
+                         \\                   //                    \\                    //
+                            partialIndex_5.txt                          partialIndex_6.txt
+                                        \\                                    //
+                                                      INDEX_FILE
 
+            Case 2:
 
+                partialIndex_1.txt    partialIndex_2.txt    partialIndex_3.txt
+                                \\            //                 //            
+                                partialIndex_4.txt              //                        
+                                        \\                     //
+                                                INDEX_FILE 
+        """
 
+        if DEBUG: print(f"{' MERGING PARTIAL INDEXES ':=^{DEBUG_MESSAGE_WIDTH}}")
 
-def createIndexofIndex():
-    """
-    Indexes the character position of every token in
-    the main index and saves index of index to file 'indexOfIndex.txt'
-    """
-
-    with open(CONFIG_FILE) as f:
-        # Gets path of folder to save index file
-        indexFolderPath = json.load(f)["INDEX_STORAGE"]
-
-    # Slash operator combines paths and creates new Path object to indexFile
-    indexFilePath = Path(indexFolderPath) / "index.txt"
-    
-    indexOfIndex = dict()
-    with indexFilePath.open(mode="r", encoding="utf-8") as indexFile:
         while True:
-            # Get character position of current line
-            seekPosition = indexFile.tell()
-            line = indexFile.readline().strip()
+            partialIndexPaths = [path for path in self.indexFolderPath.iterdir() if path.name.startswith(PARTIAL_INDEX_FILE_NAME_PREFIX)]
 
-            if line == "":
-                break
+            if len(partialIndexPaths) == 1:
+                if DEBUG: print(grey(f"RENAMING {partialIndexPaths[0].name} TO {INDEX_FILE_NAME}"))
+                
+                # All files have been merged, rename file to INDEX_FILE_NAME
+                indexPath = partialIndexPaths[0].replace(self.indexFolderPath / INDEX_FILE_NAME)
+                
+                if DEBUG: print(green(f"Successfully created: {indexPath.name}\nLocation: {indexPath.resolve()}"))
+                
+                return
 
-            # Convert text line to json object
-            line_dict = json.loads(line.strip())
-            token = list(line_dict.keys())[0]
+            partialIndexPaths = iter(partialIndexPaths)
+            while True:
+                try:
+                    filePathA = next(partialIndexPaths)
+                    filePathB = next(partialIndexPaths)
+                    mergedFilePath = self.indexFolderPath / f"{PARTIAL_INDEX_FILE_NAME_PREFIX}_{self.currPartialIndex}.txt"
+                    
+                    if DEBUG: print(grey(f"MERGING {filePathA.name} and {filePathB.name} -> {mergedFilePath.name}"))
+                    self._mergePartialIndexesToDisk(filePathA, filePathB, mergedFilePath)
+                    self.currPartialIndex += 1
 
-            indexOfIndex[token] = seekPosition
+                    # Delete partial indexes since they are now merged
+                    filePathA.unlink()
+                    filePathB.unlink()
+
+                except StopIteration:
+                    break
+
+        
+    def _mergePartialIndexesToDisk(self, fileA: Path, fileB: Path, mergedFile: Path) -> None:
+        fA = fileA.open(mode="r")
+        fB = fileB.open(mode="r")
+
+        with mergedFile.open(mode="w", encoding="utf-8") as fC:
+            lineA = fA.readline().strip()
+            lineB = fB.readline().strip()
+
+            while (lineA != "") and (lineB != ""):
+                dictA = json.loads(lineA)
+                dictB = json.loads(lineB)
+
+                tokenA = list(dictA.keys())[0]
+                tokenB = list(dictB.keys())[0]
+
+                if (tokenA == tokenB):
+                    # If tokens are the same then merge objects and write to fC
+                    merged = {
+                        tokenA: {
+                            "docFrequency": dictA[tokenA]["docFrequency"] + dictB[tokenB]["docFrequency"],
+                            "postingList": dictA[tokenA]["postingList"] + dictB[tokenB]["postingList"]
+                        }
+                    }
+                    fC.write(f"{json.dumps(merged)}\n")
+
+                    lineA = fA.readline().strip() 
+                    lineB = fB.readline().strip()
+
+                # Maintian alphabetical order 
+                elif (tokenA < tokenB):
+                    fC.write(f"{lineA}\n")
+                    lineA = fA.readline().strip()
+                else:
+                    fC.write(f"{lineB}\n")
+                    lineB = fB.readline().strip()
 
 
-    # Save index of index to disk with file name 'indexOfIndex.txt'
-    indexOfIndexFilePath = Path(indexFolderPath) / "indexOfIndex.txt"
+            # Write rest of fA or fB to fC
+            while (lineA != ""):
+                fC.write(f"{lineA}\n")
+                lineA = fA.readline().strip()
+            while (lineB != ""):
+                fC.write(f"{lineB}\n")
+                lineB = fB.readline().strip()
 
-    with indexOfIndexFilePath.open(mode="w", encoding="utf-8") as indexOfIndexFile:
-        for token, position in indexOfIndex.items():
-            indexOfIndexFile.write(f"{token} {position}\n")
-
-
-
-
-
-def main() -> None:
-
-    if DEBUG: print(f"{'CREATING PARTIAL INDEXES':=^{40}}\n")
-    createPartialIndexes()
-    if DEBUG: print(f"\n{'FINISHED PARTIAL INDEXES':=^{40}}")
-
-    if DEBUG: print(f"PARTIAL INDEXES CREATED => {currPartialIndex-1}")
-    if DEBUG: print(f"DOCUMENTS INDEXED => {numberOfDocs}\n")
+        fA.close()
+        fB.close()
 
 
-    if DEBUG: print(f"\n{'MERGING PARTIAL INDEXES':=^{40}}")
-    mergePartialIndexes()
-    if DEBUG: print(f"{'MERGE COMPLETE, MAIN INDEX CREATED':=^{40}}\n")
+    def calculateTF_IDF(self) -> None:
+        """
+        Iterates through the merged index and calculates the tf_idf score
+        for every posting. Writes updated index back to disk.
+        """
 
-    if DEBUG: print(f"\n{'CALCULATING TD-IDF SCORE':=^{40}}")
-    update_tf_idf_score()
-    if DEBUG: print(f"{'FINISHED TD-IDF SCORING':=^{40}}\n")
+        if DEBUG: print(f"{' CALCULATING TD-IDF SCORES ':=^{DEBUG_MESSAGE_WIDTH}}")
 
-    if DEBUG: print(f"\n{'CREATING INDEX OF INDEX':=^{40}}")
-    createIndexofIndex()
-    if DEBUG: print(f"{'FINISHED INDEX OF INDEX':=^{40}}")
+        oldIndex = self.indexFolderPath / INDEX_FILE_NAME
+        updatedIndex = self.indexFolderPath / "temp.txt"
+
+        with oldIndex.open(mode="r", encoding="utf-8") as old, updatedIndex.open(mode="w", encoding="utf-8") as updated:
+            for line in old:
+                object = json.loads(line.strip())
+                token = list(object.keys())[0]
+                docFrequency = object[token]["docFrequency"]
+
+                for posting in object[token]["postingList"]:
+                    posting["tf_idf"] = ( 1 + log10(posting["tokenFrequency"]) ) * log10(self.numberOfDocsIndexed / docFrequency)
+                
+                updated.write(f"{json.dumps(object)}\n")
+
+        # Delete old index file
+        oldIndex.unlink()
+
+        # Rename updated index from 'temp.txt' to INDEX_FILE_NAME
+        updatedIndex.replace(self.indexFolderPath / INDEX_FILE_NAME)
+
+        if DEBUG: print(green(f"Successfully updated: {INDEX_FILE_NAME}"))
+
+
+    def createIndexofIndex(self):
+        """
+        Indexes the start position of every token in index and saves it to the file INDEX_OF_INDEX_FILE_NAME. 
+        This allows the search engine to run is cases where the index is too large to be loaded into memory.
+        Instead the smaller index of index is loaded into memory.
+        """
+
+        if DEBUG: print(f"{' CREATING INDEX OF INDEX ':=^{DEBUG_MESSAGE_WIDTH}}")
+
+        indexFilePath = self.indexFolderPath / INDEX_FILE_NAME
+
+        indexOfIndex = dict()
+        with indexFilePath.open(mode="r", encoding="utf-8") as indexFile:
+            while True:
+                # Get start posotion of current line
+                seekPosition = indexFile.tell()
+                line = indexFile.readline().strip()
+
+                if line == "":
+                    break
+
+                object = json.loads(line.strip())
+                token = list(object.keys())[0]
+
+                indexOfIndex[token] = seekPosition
+
+
+        indexOfIndexFilePath = self.indexFolderPath / INDEX_OF_INDEX_FILE_NAME
+
+        with indexOfIndexFilePath.open(mode="w", encoding="utf-8") as indexOfIndexFile:
+            for token, position in indexOfIndex.items():
+                indexOfIndexFile.write(f"{token} {position}\n")
+
+        if DEBUG: print(green(f"Successfully created: {indexOfIndexFilePath.name}\nLocation: {indexOfIndexFilePath.resolve()}"))
+
+    
+    def writeDocIdToURLToDisk(self) -> None:
+        """
+        Saves mapping of docID's -> URL to disk. Line N contains the URL for docID N-1. 
+        (Ex. Line 10 contains URL for docID 9)
+        """
+
+        if DEBUG: print(f"{' SAVING docIDtoURL MAPPING TO DISK ':=^{DEBUG_MESSAGE_WIDTH}}")
+        
+        # Slash operator combines paths and creates new Path object to docIDtoURL file  
+        docIDtoURLFilePath = self.indexFolderPath / DOCID_TO_URL_FILE_NAME
+
+        with docIDtoURLFilePath.open(mode="w", encoding="utf-8") as f:
+            for url in self.docIDtoURL:
+                f.write(f"{url}\n")
+
+        if DEBUG: print(green(f"Successfully created: {docIDtoURLFilePath.name}\nLocation {docIDtoURLFilePath.resolve()}"))
+
+
+def main():
+    with open(CONFIG_FILE_NAME) as f:
+        cfg = json.load(f)
+        corpusFolderPath = Path(cfg["CORPUS_PATH"])   # Directory containing JSON documents to parse
+        indexFolderPath = Path(cfg["INDEX_STORAGE"])  # Directory to store index files
+
+    
+    if not corpusFolderPath.exists():
+        print(red(f"Error: '{corpusFolderPath.resolve()}' does not exist"))
+        sys.exit(1)
+    
+    if not indexFolderPath.exists():
+        print(yellow(f"Warning: '{indexFolderPath.resolve()}' does not exist"))
+        print(yellow(f"Would you like to create this folder (y/n)?"))
+        ans = input().strip().lower()
+        if ans == "y":
+            indexFolderPath.mkdir()
+        else:
+            print(red(f"Error: Please set 'INDEX_STORAGE' to valid path in {CONFIG_FILE_NAME}"))
+            sys.exit(1)
+
+
+    Indexer(corpusFolderPath=corpusFolderPath, 
+            indexFolderPath=indexFolderPath).run()
 
 
 if __name__ == "__main__":
