@@ -22,8 +22,6 @@ def tokenize(text: str) -> list[str]:
     return stemmedTokens
 
 
-
-
 def isValidToken(token: str) -> bool: 
     """
     Token is valid if each character in the token is 
@@ -46,10 +44,7 @@ def isValidToken(token: str) -> bool:
     return True
 
 
-
-
-
-def computeWordFrequencies(tokens: list[str]) -> dict[str, int]:
+def computeWordFrequencies(tokens: list[str]) -> defaultdict[str, int]:
     """ 
     Counts the number of times the given token appears in the list 
     and returns a dictionary where the key is the token and the value is 
@@ -63,10 +58,7 @@ def computeWordFrequencies(tokens: list[str]) -> dict[str, int]:
     return wordCount
 
 
-
-
-
-def computeWordPositions(tokens: list[str]) -> dict[str, list[int]]:
+def computeWordPositions(tokens: list[str]) -> defaultdict[str, list[int]]:
     """ 
     Returns a dictionary where the key is the token and the value is
     a list of positions where that token appeared. The positions starts 
@@ -78,3 +70,10 @@ def computeWordPositions(tokens: list[str]) -> dict[str, list[int]]:
         positions[token].append(position)
 
     return positions
+
+
+
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
