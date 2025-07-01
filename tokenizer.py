@@ -6,8 +6,7 @@ def tokenize(text: str) -> list[str]:
     """
     Takes a string and creates a list of "tokens"
     where each token is a string of alphanumeric characters whose
-    len is greater than 1. Each token is stemmed using the 
-    Porter Stemmer algorithm.
+    len is greater than 1. 
     """
     
     if text == "" or text == None:
@@ -16,10 +15,7 @@ def tokenize(text: str) -> list[str]:
     text = text.strip().lower() 
     tokens = nltk.tokenize.word_tokenize(text)
     
-    stemmer = nltk.stem.PorterStemmer()
-    stemmedTokens = [stemmer.stem(token) for token in tokens if isValidToken(token)]             
-            
-    return stemmedTokens
+    return [token for token in tokens if isValidToken(token)] 
 
 
 def isValidToken(token: str) -> bool: 
