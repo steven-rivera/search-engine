@@ -11,17 +11,27 @@ from bs4 import BeautifulSoup
 
 
 # INVERTED INDEX JSON STRUCTURE
-#
-# {
-#   "TOKEN": [
-#     {
-#       "docID": int,
-#       "tokenFrequency": int,
-#       "tokenImportance": int,
-#       "tf_idf": float
-#     }, 
-#   ]
-# }
+
+# Stage 1:
+#   {
+#     "TOKEN": [
+#       {
+#         "docID": int,
+#         "tokenFrequency": int,
+#         "tokenImportance": int,
+#       }, 
+#     ]
+#   }
+
+# Stage 2:
+#   {
+#     "TOKEN": [
+#       {
+#         "docID": int,
+#         "tf_idf": float
+#       }, 
+#     ]
+#   }
 
 
 # GLOBAL VARIABLES
