@@ -11,19 +11,16 @@ from bs4 import BeautifulSoup
 
 
 # INVERTED INDEX JSON STRUCTURE
-# 
+#
 # {
-#   "TOKEN": {
-#       "docFrequency": int,
-#       "postingList": [
-#            {
-#               "docID": int,
-#               "tokenFrequency": int,
-#               "tokenImportance" : int,
-#               "tf_idf": float
-#             },
-#        ]
-#   }         
+#   "TOKEN": [
+#     {
+#       "docID": int,
+#       "tokenFrequency": int,
+#       "tokenImportance": int,
+#       "tf_idf": float
+#     }, 
+#   ]
 # }
 
 
@@ -34,9 +31,10 @@ CONFIG_FILE_NAME                = "config.json"
 PARTIAL_INDEX_FILE_NAME_PREFIX  = "partialIndex"
 INDEX_FILE_NAME                 = "index.txt"
 INDEX_OF_INDEX_FILE_NAME        = "indexOfIndex.txt"
-DOCID_TO_URL_FILE_NAME          = "docIDtoURLs.txt"
+DOCID_TO_URL_FILE_NAME          = "docIDtoURL.txt"
 MAX_INDEX_SIZE                  = 5_000_000 # 5 MB
-TOKEN_IMPORTANCE                = {"title": 10, "h1": 5, "h2": 4, "h3": 3, "b": 2, "strong": 2}
+DEFAULT_IMPORTANCE              = 1
+TAG_IMPORTANCE                  = {"title": 10, "h1": 5, "h2": 4, "h3": 3, "strong": 2}
 
 
 class Indexer:
@@ -44,7 +42,7 @@ class Indexer:
         self.corpusFolderPath = corpusFolderPath
         self.indexFolderPath = indexFolderPath
 
-        self.index: dict[str, dict] = {}  # Will be used to store the main index  
+        self.index: dict[str, list] = {}  # Will be used to store the main index  
         self.docIDtoURL: list[str] = []   # List of URL's where docID is the index containing the URL for a given document
         self.numberOfDocsIndexed: int = 0 # Keeps track of how many docs have been indexed
         self.currPartialIndex: int = 1    # Keeps track of how many partial indexes have been created (ex. if currPartialIndex == 5 then partial indexes 1-4 have been created)
@@ -100,14 +98,10 @@ class Indexer:
                 for token, posting in postings.items():
                     if token in self.index:
                         # Add new posting to postingList for given token
-                        self.index[token]["docFrequency"] += 1
-                        self.index[token]["postingList"].append(posting)
+                        self.index[token].append(posting)
                     else:
                         # Initialze the postingList for new token
-                        self.index[token] = {
-                            "docFrequency" : 1,
-                            "postingList" : [posting]
-                        }
+                        self.index[token] = [posting]
 
                 self.numberOfDocsIndexed += 1
 
@@ -135,7 +129,6 @@ class Indexer:
          "docID": int,
          "tokenFrequency": int,
          "tokenImportance": int,
-         "tf_idf": float
         }
         """
 
@@ -147,15 +140,12 @@ class Indexer:
         for token, frequency in frequencies.items():
             postings[token]["docID"]           = docID
             postings[token]["tokenFrequency"]  = frequency
-            postings[token]["tokenImportance"] = 1         # Set default importance to 1
-            postings[token]["tf_idf"]          = 0.0       # td_idf we be calculated during later step, initialize to 0.0
 
-
-        # Update the token importance for all tokens within the tags ["title", "h1", "h2", "h3", "b", "strong"]
-        for tagObject in soup.find_all(["title", "h1", "h2", "h3", "b", "strong"]):
+        # Update token importance for all tokens within "important" tags
+        for tagObject in soup.find_all(list(TAG_IMPORTANCE.keys())):
             for token in tokenizer.tokenize(str(tagObject.string)):
                 if token in postings:
-                    postings[token]["tokenImportance"] = TOKEN_IMPORTANCE.get(tagObject.name, 1)
+                    postings[token]["tokenImportance"] = TAG_IMPORTANCE[tagObject.name]
 
         return postings
     
@@ -218,9 +208,9 @@ class Indexer:
                 indexPath = partialIndexPaths[0].replace(self.indexFolderPath / INDEX_FILE_NAME)
                 
                 if DEBUG: print(green(f"Successfully created: {indexPath.name}\nLocation: {indexPath.resolve()}"))
-                
                 return
 
+            
             partialIndexPaths = iter(partialIndexPaths)
             while True:
                 try:
@@ -257,12 +247,7 @@ class Indexer:
 
                 if (tokenA == tokenB):
                     # If tokens are the same then merge objects and write to fC
-                    merged = {
-                        tokenA: {
-                            "docFrequency": dictA[tokenA]["docFrequency"] + dictB[tokenB]["docFrequency"],
-                            "postingList": dictA[tokenA]["postingList"] + dictB[tokenB]["postingList"]
-                        }
-                    }
+                    merged = {tokenA: dictA[tokenA] + dictB[tokenB]}
                     fC.write(f"{json.dumps(merged)}\n")
 
                     lineA = fA.readline().strip() 
@@ -304,11 +289,18 @@ class Indexer:
             for line in old:
                 object = json.loads(line.strip())
                 token = list(object.keys())[0]
-                docFrequency = object[token]["docFrequency"]
+                docFrequency = len(object[token])
 
-                for posting in object[token]["postingList"]:
-                    posting["tf_idf"] = ( 1 + log10(posting["tokenFrequency"]) ) * log10(self.numberOfDocsIndexed / docFrequency)
-                
+                for posting in object[token]:
+                    weight = posting.pop("tokenImportance", DEFAULT_IMPORTANCE)
+                    log_tf = 1 + log10(posting["tokenFrequency"])
+                    idf = log10(self.numberOfDocsIndexed / docFrequency)
+
+                    posting["tf_idf"] = weight * log_tf * idf
+
+                    # No longer need once tf.idf is calcuated
+                    del posting["tokenFrequency"]
+                    
                 updated.write(f"{json.dumps(object)}\n")
 
         # Delete old index file
