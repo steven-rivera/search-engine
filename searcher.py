@@ -20,7 +20,7 @@ import tokenizer
 # STATIC GLOBAL VARIABLES
 DEBUG                     = True
 CONFIG_FILE               = "config.json"
-INDEX_FILE_NAME           = "index.txt"
+INDEX_FILE_NAME           = "index.jsonl"
 INDEX_OF_INDEX_FILE_NAME  = "indexOfIndex.json"
 DOCID_TO_URL_FILE_NAME    = "docIDtoURL.txt"
 WEBAPP                    = False

@@ -39,7 +39,7 @@ DEBUG                           = True
 DEBUG_MESSAGE_WIDTH             = 50
 CONFIG_FILE_NAME                = "config.json"
 PARTIAL_INDEX_FILE_NAME_PREFIX  = "partialIndex"
-INDEX_FILE_NAME                 = "index.txt"
+INDEX_FILE_NAME                 = "index.jsonl"
 INDEX_OF_INDEX_FILE_NAME        = "indexOfIndex.json"
 DOCID_TO_URL_FILE_NAME          = "docIDtoURL.txt"
 MAX_INDEX_SIZE                  = 5_000_000 # 5 MB
@@ -169,7 +169,7 @@ class Indexer:
         invertedIndex. The tokens are sorted in ascending order to optimize merging step.
         """
      
-        partialIndexFilePath = self.indexFolderPath / f"{PARTIAL_INDEX_FILE_NAME_PREFIX}_{self.currPartialIndex}.txt"
+        partialIndexFilePath = self.indexFolderPath / f"{PARTIAL_INDEX_FILE_NAME_PREFIX}_{self.currPartialIndex}.jsonl"
 
         with partialIndexFilePath.open("w", encoding="utf-8") as f:
             # Save tokens to file in sorted order to speed merging process
@@ -226,7 +226,7 @@ class Indexer:
                 try:
                     filePathA = next(partialIndexPaths)
                     filePathB = next(partialIndexPaths)
-                    mergedFilePath = self.indexFolderPath / f"{PARTIAL_INDEX_FILE_NAME_PREFIX}_{self.currPartialIndex}.txt"
+                    mergedFilePath = self.indexFolderPath / f"{PARTIAL_INDEX_FILE_NAME_PREFIX}_{self.currPartialIndex}.jsonl"
                     
                     if DEBUG: print(grey(f"MERGING {filePathA.name} and {filePathB.name} -> {mergedFilePath.name}"))
                     self._mergePartialIndexesToDisk(filePathA, filePathB, mergedFilePath)
