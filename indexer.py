@@ -40,7 +40,7 @@ DEBUG_MESSAGE_WIDTH             = 50
 CONFIG_FILE_NAME                = "config.json"
 PARTIAL_INDEX_FILE_NAME_PREFIX  = "partialIndex"
 INDEX_FILE_NAME                 = "index.txt"
-INDEX_OF_INDEX_FILE_NAME        = "indexOfIndex.txt"
+INDEX_OF_INDEX_FILE_NAME        = "indexOfIndex.json"
 DOCID_TO_URL_FILE_NAME          = "docIDtoURL.txt"
 MAX_INDEX_SIZE                  = 5_000_000 # 5 MB
 DEFAULT_IMPORTANCE              = 1
@@ -352,8 +352,7 @@ class Indexer:
         indexOfIndexFilePath = self.indexFolderPath / INDEX_OF_INDEX_FILE_NAME
 
         with indexOfIndexFilePath.open(mode="w", encoding="utf-8") as indexOfIndexFile:
-            for token, position in indexOfIndex.items():
-                indexOfIndexFile.write(f"{token} {position}\n")
+            json.dump(indexOfIndex, indexOfIndexFile, indent=2)
 
         if DEBUG: print(green(f"Successfully created: {indexOfIndexFilePath.name}\nLocation: {indexOfIndexFilePath.resolve()}"))
 

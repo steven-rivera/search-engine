@@ -21,7 +21,7 @@ import tokenizer
 DEBUG                     = True
 CONFIG_FILE               = "config.json"
 INDEX_FILE_NAME           = "index.txt"
-INDEX_OF_INDEX_FILE_NAME  = "indexOfIndex.txt"
+INDEX_OF_INDEX_FILE_NAME  = "indexOfIndex.json"
 DOCID_TO_URL_FILE_NAME    = "docIDtoURL.txt"
 WEBAPP                    = False
 
@@ -54,9 +54,7 @@ class Searcher:
         indexOfIndexFilePath = self.indexFolderPath / INDEX_OF_INDEX_FILE_NAME
 
         with indexOfIndexFilePath.open(mode="r", encoding="utf-8") as indexOfIndexFile:
-            for line in indexOfIndexFile:
-                token, seekPosition = line.strip().split()
-                self.indexOfIndex[token] = int(seekPosition)
+            self.indexOfIndex = json.load(indexOfIndexFile)
 
 
     def loadDocIDtoURLs(self) -> None:
