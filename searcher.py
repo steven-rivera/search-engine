@@ -17,8 +17,7 @@ import tokenizer
        
 
 
-# STATIC GLOBAL VARIABLES
-
+# GLOBAL VARIABLES
 CONFIG_FILE = "config.json"
 
 
@@ -87,14 +86,17 @@ class Searcher:
         Continuously takes query input from user until an empty query is given.
         """
 
-        while (query := input("Input Query: ")) != "":
-            start = time.time()
-            urls = self.searchQuery(query)
-            end = time.time()
+        try :
+            while (query := input("Input Query: ")) != "":
+                start = time.time()
+                urls = self.searchQuery(query)
+                end = time.time()
 
-            print(f"(Search Time: {end - start:.4f} seconds)")
-            for rank, url in enumerate(urls, 1):
-                print(f"{rank}: {url}")
+                print(f"(Search Time: {end - start:.4f} seconds)")
+                for rank, url in enumerate(urls, 1):
+                    print(f"{rank}: {url}")
+        except EOFError:
+            return
 
 
     def searchQuery(self, query: str, maxResults: int = 5) -> list[str]:
