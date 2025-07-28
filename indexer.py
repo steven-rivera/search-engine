@@ -40,7 +40,7 @@ DEBUG_MESSAGE_WIDTH             = 50
 CONFIG_FILE_NAME                = "config.json"
 MAX_DOCS_IN_MEMORY              = 1000
 DEFAULT_IMPORTANCE              = 1
-TAG_IMPORTANCE                  = {"title": 10, "h1": 5, "h2": 4, "h3": 3, "strong": 2}
+TAG_IMPORTANCE                  = {"title": 10, "h1": 6, "h2": 6, "h3": 5, "h4": 4, "h5": 3, "h6": 2, "strong": 2}
 
 
 class Indexer:
@@ -100,10 +100,9 @@ class Indexer:
                 if url == "" or html == "":
                     continue
 
-
                 self.docIDtoURL.append(url)
-                postings: dict[str, dict[str, int]] = self.parseDocument(html, self.currDocID)
-                
+                postings = self.parseDocument(html)
+        
                 for token, posting in postings.items():
                     if token in self.index:
                         self.index[token].append(posting)
@@ -111,24 +110,24 @@ class Indexer:
                         # Initialze the postingList in index for new token
                         self.index[token] = [posting]
 
+                self.currDocID += 1
                 self.numDocsIndexed += 1
 
                 if DEBUG and self.numDocsIndexed % 10 == 0: 
                     print(grey(f"{self.numDocsIndexed} docs indexed"))
 
-            # Create a partial index on disk if in-memory index gets to large 
+            # Create a partial index on disk if in-memory index gets too large 
             if self.numDocsIndexed % MAX_DOCS_IN_MEMORY == 0:
                 if DEBUG: print(yellow(f"Indexed {MAX_DOCS_IN_MEMORY:,} documents. Flushing index to disk..."))
                 self.writePartialIndexToDisk()
                 self.index.clear() 
 
-            self.currDocID += 1
-
+        
         self.writePartialIndexToDisk()
         
         if DEBUG: print(f"Total Docs Indexed: {self.numDocsIndexed}\n")
 
-    def parseDocument(self, html: str, docID: int) -> dict[str, dict[str, int]]:
+    def parseDocument(self, html: str) -> dict[str, dict[str, int]]:
         """
         Returns a dictionary where the key is a token and the value
         is a posting for the current document docID. The posting is of
@@ -147,7 +146,7 @@ class Indexer:
 
         postings = defaultdict(dict)
         for token, frequency in frequencies.items():
-            postings[token]["docID"] = docID
+            postings[token]["docID"] = self.currDocID
             postings[token]["tf"]    = frequency
 
         # Update token importance for all tokens within "important" tags
