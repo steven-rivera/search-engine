@@ -1,4 +1,7 @@
 {
-    "CORPUS_PATH" : "./CORPUS",
-    "INDEX_STORAGE" : "./INDEX"
+    "CORPUS_PATH": "./CORPUS",
+    "INDEX_STORAGE": "./INDEX",
+    "INDEX_FILE": "index.jsonl",
+    "META_INDEX_FILE": "metaIndex.json",
+    "ID_TO_URL_FILE": "docIDtoURL.json"
 }

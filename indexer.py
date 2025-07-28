@@ -17,8 +17,8 @@ from bs4 import BeautifulSoup
 #     "TOKEN": [
 #       {
 #         "docID": int,
-#         "tokenFrequency": int,
-#         "tokenImportance": int,
+#         "tf": int,
+#         "i": int,
 #       }, 
 #     ]
 #   }
@@ -38,31 +38,31 @@ from bs4 import BeautifulSoup
 DEBUG                           = True
 DEBUG_MESSAGE_WIDTH             = 50
 CONFIG_FILE_NAME                = "config.json"
-PARTIAL_INDEX_FILE_NAME_PREFIX  = "partialIndex"
-INDEX_FILE_NAME                 = "index.jsonl"
-INDEX_OF_INDEX_FILE_NAME        = "indexOfIndex.json"
-DOCID_TO_URL_FILE_NAME          = "docIDtoURL.txt"
-MAX_INDEX_SIZE                  = 5_000_000 # 5 MB
+MAX_DOCS_IN_MEMORY              = 1000
 DEFAULT_IMPORTANCE              = 1
 TAG_IMPORTANCE                  = {"title": 10, "h1": 5, "h2": 4, "h3": 3, "strong": 2}
 
 
 class Indexer:
-    def __init__(self, corpusFolderPath: Path, indexFolderPath: Path):
-        self.corpusFolderPath = corpusFolderPath
-        self.indexFolderPath = indexFolderPath
-
+    def __init__(self, corpusFolderPath: Path, indexFolderPath: Path, indexFilePath: Path, metaIndexFilePath: Path, docIDtoURLFilePath: Path):
+        self.corpusFolderPath   = corpusFolderPath
+        self.indexFolderPath    = indexFolderPath
+        self.indexFilePath      = indexFilePath
+        self.metaIndexFilePath  = metaIndexFilePath
+        self.docIDtoURLFilePath = docIDtoURLFilePath
+        
         self.index: dict[str, list] = {}  # Will be used to store the main index  
-        self.docIDtoURL: list[str] = []   # List of URL's where docID is the index containing the URL for a given document
-        self.numberOfDocsIndexed: int = 0 # Keeps track of how many docs have been indexed
-        self.currPartialIndex: int = 1    # Keeps track of how many partial indexes have been created (ex. if currPartialIndex == 5 then partial indexes 1-4 have been created)
+        self.docIDtoURL: list[str]  = []  # List of URL's where docID is the index containing the URL for a given document
+        self.numDocsIndexed: int    = 0   # Keeps track of how many docs have been indexed
+        self.currDocID: int         = 0   # Stores the ID that will be assigned to next parsed document
+        self.currPartialIndex: int  = 1   # Keeps track of how many partial indexes have been created (ex. if currPartialIndex == 5 then partial indexes 1-4 have been created)
         
 
     def run(self):
         self.createPartialIndexes()
         self.mergePartialIndexesToDisk()
-        self.calculateTF_IDF()
-        self.createIndexofIndex()
+        self.calculate_TF_IDF()
+        self.createMetaIndex()
         self.writeDocIdToURLToDisk()
             
 
@@ -86,7 +86,6 @@ class Indexer:
     def createPartialIndexes(self) -> None:
         if DEBUG: print(f"{' CREATING PARTIAL INDEXES ':=^{DEBUG_MESSAGE_WIDTH}}")
 
-        currDocID = 0
         for document in self.iterCorpus():
             with document.open() as f:
                 try:
@@ -103,31 +102,31 @@ class Indexer:
 
 
                 self.docIDtoURL.append(url)
-                postings: dict[str, dict[str, int]] = self.parseDocument(html, currDocID)
+                postings: dict[str, dict[str, int]] = self.parseDocument(html, self.currDocID)
                 
                 for token, posting in postings.items():
                     if token in self.index:
-                        # Add new posting to postingList for given token
                         self.index[token].append(posting)
                     else:
-                        # Initialze the postingList for new token
+                        # Initialze the postingList in index for new token
                         self.index[token] = [posting]
 
-                self.numberOfDocsIndexed += 1
+                self.numDocsIndexed += 1
 
-                if DEBUG and self.numberOfDocsIndexed % 10 == 0: 
-                    print(grey(f"{self.numberOfDocsIndexed} docs indexed, Current Index Size: {sys.getsizeof(self.index):,} Bytes"))
+                if DEBUG and self.numDocsIndexed % 10 == 0: 
+                    print(grey(f"{self.numDocsIndexed} docs indexed"))
 
-            # Save partial index to disk if invertedIndex excedes memory capacity 
-            if sys.getsizeof(self.index) > MAX_INDEX_SIZE:
-                if DEBUG: print(yellow(f"Current Index Size greater than {MAX_INDEX_SIZE:,} Bytes\nSaving index to disk..."))
+            # Create a partial index on disk if in-memory index gets to large 
+            if self.numDocsIndexed % MAX_DOCS_IN_MEMORY == 0:
+                if DEBUG: print(yellow(f"Indexed {MAX_DOCS_IN_MEMORY:,} documents. Flushing index to disk..."))
                 self.writePartialIndexToDisk()
                 self.index.clear() 
 
-            currDocID += 1
+            self.currDocID += 1
 
         self.writePartialIndexToDisk()
-        if DEBUG: print(f"Total Docs Indexed: {self.numberOfDocsIndexed}")
+        
+        if DEBUG: print(f"Total Docs Indexed: {self.numDocsIndexed}\n")
 
     def parseDocument(self, html: str, docID: int) -> dict[str, dict[str, int]]:
         """
@@ -148,14 +147,14 @@ class Indexer:
 
         postings = defaultdict(dict)
         for token, frequency in frequencies.items():
-            postings[token]["docID"]           = docID
-            postings[token]["tokenFrequency"]  = frequency
+            postings[token]["docID"] = docID
+            postings[token]["tf"]    = frequency
 
         # Update token importance for all tokens within "important" tags
         for tagObject in soup.find_all(list(TAG_IMPORTANCE.keys())):
             for token in tokenizer.tokenize(str(tagObject.string)):
                 if token in postings:
-                    postings[token]["tokenImportance"] = TAG_IMPORTANCE[tagObject.name]
+                    postings[token]["i"] = TAG_IMPORTANCE[tagObject.name]
 
         return postings
     
@@ -169,7 +168,7 @@ class Indexer:
         invertedIndex. The tokens are sorted in ascending order to optimize merging step.
         """
      
-        partialIndexFilePath = self.indexFolderPath / f"{PARTIAL_INDEX_FILE_NAME_PREFIX}_{self.currPartialIndex}.jsonl"
+        partialIndexFilePath = self.indexFolderPath / f"partialIndex_{self.currPartialIndex}.jsonl"
 
         with partialIndexFilePath.open("w", encoding="utf-8") as f:
             # Save tokens to file in sorted order to speed merging process
@@ -177,10 +176,11 @@ class Indexer:
                 line = {token: self.index[token]}
                 f.write(f"{json.dumps(line)}\n")
 
-        if DEBUG: print(green(f"Successfully created: {partialIndexFilePath.name}\nLocation: {partialIndexFilePath.resolve()}"))
-        
-        # Keeps track of how many partial indexs have been created
         self.currPartialIndex += 1
+
+        if DEBUG: print(green(f"Successfully created partial index: {partialIndexFilePath.resolve()}"))
+        
+        
    
 
     def mergePartialIndexesToDisk(self) -> None:
@@ -209,15 +209,16 @@ class Indexer:
         if DEBUG: print(f"{' MERGING PARTIAL INDEXES ':=^{DEBUG_MESSAGE_WIDTH}}")
 
         while True:
-            partialIndexPaths = [path for path in self.indexFolderPath.iterdir() if path.name.startswith(PARTIAL_INDEX_FILE_NAME_PREFIX)]
+            partialIndexPaths = [path for path in self.indexFolderPath.iterdir() if path.name.startswith("partialIndex")]
 
             if len(partialIndexPaths) == 1:
-                if DEBUG: print(grey(f"RENAMING {partialIndexPaths[0].name} TO {INDEX_FILE_NAME}"))
-                
-                # All files have been merged, rename file to INDEX_FILE_NAME
-                indexPath = partialIndexPaths[0].replace(self.indexFolderPath / INDEX_FILE_NAME)
-                
-                if DEBUG: print(green(f"Successfully created: {indexPath.name}\nLocation: {indexPath.resolve()}"))
+                # All files have been merged, rename file to self.indexFilePath.name
+                indexPath = partialIndexPaths[0].replace(self.indexFilePath)
+
+                if DEBUG: 
+                    print(green("All partial indexes merged."))
+                    print(green(f"Renamed {partialIndexPaths[0].name} to {self.indexFilePath.name}\n"))
+    
                 return
 
             
@@ -226,9 +227,8 @@ class Indexer:
                 try:
                     filePathA = next(partialIndexPaths)
                     filePathB = next(partialIndexPaths)
-                    mergedFilePath = self.indexFolderPath / f"{PARTIAL_INDEX_FILE_NAME_PREFIX}_{self.currPartialIndex}.jsonl"
+                    mergedFilePath = self.indexFolderPath / f"partialIndex_{self.currPartialIndex}.jsonl"
                     
-                    if DEBUG: print(grey(f"MERGING {filePathA.name} and {filePathB.name} -> {mergedFilePath.name}"))
                     self._mergePartialIndexesToDisk(filePathA, filePathB, mergedFilePath)
                     self.currPartialIndex += 1
 
@@ -236,11 +236,16 @@ class Indexer:
                     filePathA.unlink()
                     filePathB.unlink()
 
+                    if DEBUG: print(red(f"Deleted {filePathA.name} and {filePathB.name}"))
+                    
+
                 except StopIteration:
                     break
 
         
     def _mergePartialIndexesToDisk(self, fileA: Path, fileB: Path, mergedFile: Path) -> None:
+        if DEBUG: print(grey(f"MERGING {fileA.name} and {fileB.name} as {mergedFile.name}"))
+
         fA = fileA.open(mode="r")
         fB = fileB.open(mode="r")
 
@@ -263,7 +268,7 @@ class Indexer:
                     lineA = fA.readline().strip() 
                     lineB = fB.readline().strip()
 
-                # Maintian alphabetical order 
+                # Maintain alphabetical order 
                 elif (tokenA < tokenB):
                     fC.write(f"{lineA}\n")
                     lineA = fA.readline().strip()
@@ -284,16 +289,16 @@ class Indexer:
         fB.close()
 
 
-    def calculateTF_IDF(self) -> None:
+    def calculate_TF_IDF(self) -> None:
         """
         Iterates through the merged index and calculates the tf_idf score
         for every posting. Writes updated index back to disk.
         """
 
-        if DEBUG: print(f"{' CALCULATING TD-IDF SCORES ':=^{DEBUG_MESSAGE_WIDTH}}")
+        if DEBUG: print(f"{' CALCULATING TF-IDF SCORES ':=^{DEBUG_MESSAGE_WIDTH}}")
 
-        oldIndex = self.indexFolderPath / INDEX_FILE_NAME
-        updatedIndex = self.indexFolderPath / "temp.txt"
+        oldIndex = self.indexFilePath
+        updatedIndex = self.indexFolderPath / "temp.jsonl"
 
         with oldIndex.open(mode="r", encoding="utf-8") as old, updatedIndex.open(mode="w", encoding="utf-8") as updated:
             for line in old:
@@ -302,39 +307,37 @@ class Indexer:
                 docFrequency = len(object[token])
 
                 for posting in object[token]:
-                    weight = posting.pop("tokenImportance", DEFAULT_IMPORTANCE)
-                    log_tf = 1 + log10(posting["tokenFrequency"])
-                    idf = log10(self.numberOfDocsIndexed / docFrequency)
+                    i = posting.pop("i", DEFAULT_IMPORTANCE)
+                    log_tf = 1 + log10(posting["tf"])
+                    idf = log10(self.numDocsIndexed / docFrequency)
 
-                    posting["tf_idf"] = weight * log_tf * idf
+                    posting["tf_idf"] = i * log_tf * idf
 
                     # No longer need once tf.idf is calcuated
-                    del posting["tokenFrequency"]
+                    del posting["tf"]
                     
                 updated.write(f"{json.dumps(object)}\n")
 
         # Delete old index file
         oldIndex.unlink()
 
-        # Rename updated index from 'temp.txt' to INDEX_FILE_NAME
-        updatedIndex.replace(self.indexFolderPath / INDEX_FILE_NAME)
+        # Rename updated index from 'temp.jsonl' to self.indexFilePath.name
+        updatedIndex.replace(self.indexFilePath)
 
-        if DEBUG: print(green(f"Successfully updated: {INDEX_FILE_NAME}"))
+        if DEBUG: print(green(f"Successfully updated: {self.indexFilePath.name}\n"))
 
 
-    def createIndexofIndex(self):
+    def createMetaIndex(self):
         """
         Indexes the start position of every token in index and saves it to the file INDEX_OF_INDEX_FILE_NAME. 
         This allows the search engine to run is cases where the index is too large to be loaded into memory.
         Instead the smaller index of index is loaded into memory.
         """
 
-        if DEBUG: print(f"{' CREATING INDEX OF INDEX ':=^{DEBUG_MESSAGE_WIDTH}}")
+        if DEBUG: print(f"{' SAVING META INDEX TO DISK ':=^{DEBUG_MESSAGE_WIDTH}}")
 
-        indexFilePath = self.indexFolderPath / INDEX_FILE_NAME
-
-        indexOfIndex = dict()
-        with indexFilePath.open(mode="r", encoding="utf-8") as indexFile:
+        metaIndex = dict()
+        with self.indexFilePath.open(mode="r", encoding="utf-8") as indexFile:
             while True:
                 # Get start posotion of current line
                 seekPosition = indexFile.tell()
@@ -346,33 +349,27 @@ class Indexer:
                 object = json.loads(line.strip())
                 token = list(object.keys())[0]
 
-                indexOfIndex[token] = seekPosition
+                metaIndex[token] = seekPosition
 
 
-        indexOfIndexFilePath = self.indexFolderPath / INDEX_OF_INDEX_FILE_NAME
+        with self.metaIndexFilePath.open(mode="w", encoding="utf-8") as metaIndexFile:
+            json.dump(metaIndex, metaIndexFile, indent=2)
 
-        with indexOfIndexFilePath.open(mode="w", encoding="utf-8") as indexOfIndexFile:
-            json.dump(indexOfIndex, indexOfIndexFile, indent=2)
-
-        if DEBUG: print(green(f"Successfully created: {indexOfIndexFilePath.name}\nLocation: {indexOfIndexFilePath.resolve()}"))
+        if DEBUG: print(green(f"Successfully created: {self.metaIndexFilePath.resolve()}\n"))
 
     
     def writeDocIdToURLToDisk(self) -> None:
         """
-        Saves mapping of docID's -> URL to disk. Line N contains the URL for docID N-1. 
-        (Ex. Line 10 contains URL for docID 9)
+        Saves mapping of docID's -> URL to disk as a JSON array. The docID is an
+        index into the array of URLs 
         """
 
         if DEBUG: print(f"{' SAVING docIDtoURL MAPPING TO DISK ':=^{DEBUG_MESSAGE_WIDTH}}")
         
-        # Slash operator combines paths and creates new Path object to docIDtoURL file  
-        docIDtoURLFilePath = self.indexFolderPath / DOCID_TO_URL_FILE_NAME
+        with self.docIDtoURLFilePath.open(mode="w", encoding="utf-8") as f:
+            json.dump(self.docIDtoURL, f, indent=2)
 
-        with docIDtoURLFilePath.open(mode="w", encoding="utf-8") as f:
-            for url in self.docIDtoURL:
-                f.write(f"{url}\n")
-
-        if DEBUG: print(green(f"Successfully created: {docIDtoURLFilePath.name}\nLocation {docIDtoURLFilePath.resolve()}"))
+        if DEBUG: print(green(f"Successfully created: {self.docIDtoURLFilePath.resolve()}"))
 
 
 def main():
@@ -380,6 +377,10 @@ def main():
         cfg = json.load(f)
         corpusFolderPath = Path(cfg["CORPUS_PATH"])   # Directory containing JSON documents to parse
         indexFolderPath = Path(cfg["INDEX_STORAGE"])  # Directory to store index files
+
+        indexFilePath      = indexFolderPath / cfg["INDEX_FILE"]
+        metaIndexFilePath  = indexFolderPath / cfg["META_INDEX_FILE"]
+        docIDtoURLFilePath = indexFolderPath / cfg["ID_TO_URL_FILE"]
 
     
     if not corpusFolderPath.exists():
@@ -393,12 +394,15 @@ def main():
         if ans == "y":
             indexFolderPath.mkdir()
         else:
-            print(red(f"Error: Please set 'INDEX_STORAGE' to valid path in {CONFIG_FILE_NAME}"))
+            print(red(f"Error: Please set 'INDEX_STORAGE' to existing directory in {CONFIG_FILE_NAME}"))
             sys.exit(1)
 
 
-    Indexer(corpusFolderPath=corpusFolderPath, 
-            indexFolderPath=indexFolderPath).run()
+    Indexer(corpusFolderPath=corpusFolderPath,
+            indexFolderPath=indexFolderPath, 
+            indexFilePath=indexFilePath,
+            metaIndexFilePath=metaIndexFilePath, 
+            docIDtoURLFilePath=docIDtoURLFilePath).run()
 
 
 if __name__ == "__main__":

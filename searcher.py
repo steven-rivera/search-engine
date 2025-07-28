@@ -18,43 +18,35 @@ import tokenizer
 
 
 # STATIC GLOBAL VARIABLES
-DEBUG                     = True
-CONFIG_FILE               = "config.json"
-INDEX_FILE_NAME           = "index.jsonl"
-INDEX_OF_INDEX_FILE_NAME  = "indexOfIndex.json"
-DOCID_TO_URL_FILE_NAME    = "docIDtoURL.txt"
-WEBAPP                    = False
 
+CONFIG_FILE = "config.json"
 
 
 class Searcher:
-    def __init__(self, indexFolderPath: Path, runAsWebApp: bool = False):
-        self.indexFolderPath = indexFolderPath
+    def __init__(self, indexFilePath: Path, metaIndexFilePath: Path, docIDtoURLFilePath: Path, runAsWebApp: bool = False):
+        self.indexFilePath = indexFilePath
+        self.metaIndexFilePath = metaIndexFilePath
+        self.docIDtoURLFilePath = docIDtoURLFilePath
         self.runAsWebApp = runAsWebApp
-        self.indexOfIndex = dict()
+        
+        self.metaIndex = dict()
         self.docIDtoURL = []
 
     def run(self):
-        self.invertedIndexFile = open(self.indexFolderPath / INDEX_FILE_NAME, 
-                                      mode="r", 
-                                      encoding="utf-8")
-        self.loadIndexOfIndex()
+        self.indexFile = open(self.indexFilePath, mode="r", encoding="utf-8")
+        self.loadMetaIndex()
         self.loadDocIDtoURLs()
 
         if self.runAsWebApp:
             self.runWebAppSearchEngine()
         else:
             self.runConsoleSearchEngine()
+
+        self.indexFile.close()
         
-    def loadIndexOfIndex(self) -> None:
-        """
-        Loads the index of index into memory.
-        """
-
-        indexOfIndexFilePath = self.indexFolderPath / INDEX_OF_INDEX_FILE_NAME
-
-        with indexOfIndexFilePath.open(mode="r", encoding="utf-8") as indexOfIndexFile:
-            self.indexOfIndex = json.load(indexOfIndexFile)
+    def loadMetaIndex(self) -> None:
+        with self.metaIndexFilePath.open(mode="r", encoding="utf-8") as metaIndexFile:
+            self.metaIndex = json.load(metaIndexFile)
 
 
     def loadDocIDtoURLs(self) -> None:
@@ -62,12 +54,9 @@ class Searcher:
         Loads the URLs of entire corpus into memory. 
         The URL of a given docID is list[docID].
         """
-
-        docIDtoURLFilePath = self.indexFolderPath / DOCID_TO_URL_FILE_NAME
         
-        with docIDtoURLFilePath.open(mode="r", encoding="utf-8") as docIDtoURLFile:
-            for line in docIDtoURLFile:
-                self.docIDtoURL.append(line.strip())
+        with self.docIDtoURLFilePath.open(mode="r", encoding="utf-8") as docIDtoURLFile:
+            self.docIDtoURL = json.load(docIDtoURLFile)
     
     
     def runWebAppSearchEngine(self):
@@ -139,19 +128,19 @@ class Searcher:
 
     def readPostingList(self, token: str) -> list[dict[str, int]]:
         """
-        Returns the posting list of the specified token.
+        Returns the posting list of the specified token from the index file.
         """
 
         # Seek file pointer to line containing current token
-        seekPostion = self.indexOfIndex.get(token, -1)
+        seekPostion = self.metaIndex.get(token, -1)
         if seekPostion == -1:
             return list()
 
         # Seek to line in index containing toker       
-        self.invertedIndexFile.seek(seekPostion)
+        self.indexFile.seek(seekPostion)
 
         # Load JSON object into memory from invertedIndex
-        json_dict = json.loads(self.invertedIndexFile.readline().strip())
+        json_dict = json.loads(self.indexFile.readline().strip())
 
         return json_dict[token]
         
@@ -264,12 +253,17 @@ def main():
 
     with open(CONFIG_FILE) as f:
         cfg = json.load(f)
+        
         indexFolderPath = Path(cfg["INDEX_STORAGE"])  # Directory containing index files
 
+        indexFilePath      = indexFolderPath / cfg["INDEX_FILE"]
+        metaIndexFilePath  = indexFolderPath / cfg["META_INDEX_FILE"]
+        docIDtoURLFilePath = indexFolderPath / cfg["ID_TO_URL_FILE"]
 
-    Searcher(indexFolderPath=indexFolderPath, 
+    Searcher(indexFilePath=indexFilePath, 
+             metaIndexFilePath=metaIndexFilePath,
+             docIDtoURLFilePath=docIDtoURLFilePath,
              runAsWebApp=args.webapp).run()
-
 
 
 if __name__ == "__main__":
