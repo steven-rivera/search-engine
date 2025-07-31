@@ -135,8 +135,8 @@ class Indexer:
 
         {
          "docID": int,
-         "tokenFrequency": int,
-         "tokenImportance": int,
+         "tf": int,
+         "i": int,
         }
         """
 

@@ -138,8 +138,8 @@ The inverted index is stored on disk as a `JSONL` file,  with each line containi
   "TOKEN": [
     {
       "docID": 0,
-      "tokenFrequency": 1,
-      "tokenImportance": 10,
+      "tf": 1,
+      "i": 10,
     }, 
   ]
 }
