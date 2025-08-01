@@ -195,7 +195,7 @@ where:
 I_{t,d} \in \mathbb{N}
 ```
 
-> $I_{t,d}$ increases the scores of documents that contain query tokens in more "important" HTML tags. For example tokens contained within a`h1` tag should have a higher weight than tokens contained withing a `<p>` tag. 
+> $I_{t,d}$ is an integer multiplier that gives more weight to documents that contain query tokens within certain HTML tags. For example tokens contained within a `<h1>` tag are considered more "important" than tokens contained within a `<p>` tag. 
 
 ```math
 \text{ltf}_{t,d} = 
